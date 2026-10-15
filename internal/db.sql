@@ -17,6 +17,13 @@ CREATE TABLE "user_profile" (
     "created_at" TIMESTAMP DEFAULT NOW()
 );
 
+CREATE TABLE "user_contacts" (
+    "id" UUID PRIMARY KEY,
+    "id_profile_user" UUID REFERENCES "user_profile"("id"),
+    "updated_at" TIMESTAMP DEFAULT NOW(),
+    "created_at" TIMESTAMP DEFAULT NOW()
+);
+
 CREATE TABLE "conversations" (
     "id" UUID PRIMARY KEY,
     "updated_at" TIMESTAMP DEFAULT NOW(),

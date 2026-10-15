@@ -1,6 +1,7 @@
 package websocket
 
 import (
+	"encoding/json"
 	"log"
 	"net/http"
 	"sync"
@@ -10,13 +11,20 @@ import (
 )
 
 type Hub struct {
-	clients map[*websocket.Conn]bool
+	clients map[string]*websocket.Conn
 	mu      sync.Mutex
+}
+
+type Message struct {
+	SenderId   string `json:"senderId"`
+	ReceiverId string `json:"receiverId"`
+	Message    string `json:"message"`
+	Type       string `json:"type"`
 }
 
 func NewHub() *Hub {
 	return &Hub{
-		clients: make(map[*websocket.Conn]bool),
+		clients: make(map[string]*websocket.Conn),
 	}
 }
 
@@ -27,6 +35,15 @@ var upgrader = websocket.Upgrader{
 }
 
 func (h *Hub) HandleConnection(c *gin.Context) {
+	userID := c.Query("userId")
+
+	if userID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": "userId is required",
+		})
+		return
+	}
+
 	conn, err := upgrader.Upgrade(c.Writer, c.Request, nil)
 	if err != nil {
 		log.Println("WebSocket upgrade error:", err)
@@ -34,37 +51,73 @@ func (h *Hub) HandleConnection(c *gin.Context) {
 	}
 
 	h.mu.Lock()
-	h.clients[conn] = true
+	h.clients[userID] = conn
 	h.mu.Unlock()
+
+	log.Println("User connected:", userID)
 
 	defer func() {
 		h.mu.Lock()
-		delete(h.clients, conn)
+
+		if h.clients[userID] == conn {
+			delete(h.clients, userID)
+		}
+
 		h.mu.Unlock()
 
 		conn.Close()
+		log.Println("User disconnected:", userID)
 	}()
 
 	for {
-		messageType, message, err := conn.ReadMessage()
+		_, data, err := conn.ReadMessage()
 		if err != nil {
 			log.Println("WebSocket disconnected:", err)
 			break
 		}
+		var message Message
 
-		h.Broadcast(messageType, message)
+		if err := json.Unmarshal(data, &message); err != nil {
+			log.Println("Invalid message:", err)
+			continue
+		}
+
+		if message.ReceiverId == "" || message.Message == "" {
+			log.Println("Invalid receiver or empty message")
+			continue
+		}
+
+		message.SenderId = userID
+		message.Type = "chat"
+
+		response, err := json.Marshal(message)
+		if err != nil {
+			log.Println("JSON encode error:", err)
+			continue
+		}
+
+		h.SendToUser(userID, response)
+
+		if message.ReceiverId != userID {
+			h.SendToUser(message.ReceiverId, response)
+		}
 	}
 }
 
-func (h *Hub) Broadcast(messageType int, message []byte) {
+func (h *Hub) SendToUser(userID string, message []byte) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
-	for conn := range h.clients {
-		if err := conn.WriteMessage(messageType, message); err != nil {
-			log.Println("WebSocket write error:", err)
-			conn.Close()
-			delete(h.clients, conn)
-		}
+	conn, exists := h.clients[userID]
+	if !exists {
+		log.Println("User not connected:", userID)
+		return
+	}
+
+	if err := conn.WriteMessage(websocket.TextMessage, message); err != nil {
+		log.Println("WebSocket write error:", err)
+
+		delete(h.clients, userID)
+		conn.Close()
 	}
 }

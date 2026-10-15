@@ -12,6 +12,8 @@ import (
 	"github.com/bildanjhry/log-be/internal/service"
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	chatws "github.com/bildanjhry/log-be/internal/websocket"
 )
 
 func main() {
@@ -29,6 +31,9 @@ func main() {
 	userRepo := repository.NewUserRepository(db)
 	userService := service.NewUserService(userRepo)
 	userHandler := handler.NewUserHandler(userService)
+
+	hub := chatws.NewHub()
+	router.GET("/chat", hub.HandleConnection)
 
 	api := router.Group("/api")
 	api.GET("/users", userHandler.GetUsers)
